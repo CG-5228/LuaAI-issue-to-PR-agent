@@ -1,0 +1,11 @@
+node_modules/
+dist/
+dist-v2/
+target-repo/
+.lua/
+.lua-build/
+.env
+.env.*
+!env.example
+!*.example
+*.log

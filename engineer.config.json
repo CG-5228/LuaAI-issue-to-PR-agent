@@ -1,0 +1,18 @@
+{
+  "repository": "OWNER/REPOSITORY",
+  "baseBranch": "main",
+  "issueLabel": "lua-ready",
+  "agentName": "issue-to-PR",
+  "codingModel": "anthropic/claude-fable-5-1",
+  "installCommands": [["npm", "ci"]],
+  "checks": [
+    { "name": "lint", "argv": ["npm", "run", "lint"] },
+    { "name": "tests", "argv": ["npm", "test"] }
+  ],
+  "requiredStatusChecks": ["CI"],
+  "minimumApprovals": 1,
+  "maxChangedFiles": 30,
+  "protectedPaths": [".github/", ".lua/", ".agents/", ".codex/", "AGENTS.md"],
+  "budget": { "maxCredits": 100, "maxSteps": 12, "maxDurationSeconds": 10800 },
+  "codingTimeoutSeconds": 3600
+}

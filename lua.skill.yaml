@@ -1,0 +1,16 @@
+agent:
+  agentId: baseAgent_agent_1791314266377_zf9x8zids
+  orgId: 7e9c9b76-1922-431a-bc15-7def89f6e858
+skills:
+  - name: engineering
+    skillId: ''
+    version: 1.0.0
+webhooks: []
+jobs: []
+preprocessors: []
+postprocessors: []
+mcpServers: []
+workflows:
+  - name: resolve-issue
+    version: 1.0.0
+    workflowId: ''

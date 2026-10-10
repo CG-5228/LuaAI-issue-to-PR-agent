@@ -1,0 +1,26 @@
+{
+  "name": "lua-issue-to-pr-agent",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "node node_modules/typescript/bin/tsc",
+    "test": "npm run build && node --test dist/tests/*.test.js",
+    "lua": "LUA_TELEMETRY=false node node_modules/lua-cli/dist/index.js",
+    "compile": "npm run lua -- compile",
+    "test:workflow": "npm run build && node scripts/smoke-workflow.mjs",
+    "prepare:github": "npm run build && node scripts/prepare-github.mjs",
+    "check:setup": "node scripts/check-setup.mjs"
+  },
+  "dependencies": {
+    "lua-cli": "3.47.0",
+    "zod": "3.25.76"
+  },
+  "devDependencies": {
+    "typescript": "5.9.3",
+    "@types/node": "20.19.43"
+  }
+}
