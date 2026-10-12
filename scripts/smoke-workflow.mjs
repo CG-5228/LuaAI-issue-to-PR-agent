@@ -8,10 +8,9 @@ import assert from 'node:assert/strict';
 import { engineerConfig as config } from '../dist/src/config.js';
 
 const project = fileURLToPath(new URL('../', import.meta.url));
-const fixtureCommands = [['npm', 'ci'], ['npm', 'run', 'lint'], ['npm', 'test']];
-if (JSON.stringify([...config.installCommands, ...config.checks.map(check => check.argv)]) !== JSON.stringify(fixtureCommands)) {
-  throw new Error('This smoke fixture requires the default npm install/lint/test commands. Adapt the scratch fixture for customized target commands; npm test still covers the core behavior.');
-}
+// Adapt the fixture to the actual configured commands instead of requiring defaults.
+const installCommands = config.installCommands.length ? config.installCommands : [['npm', 'ci']];
+const checkCommands = config.checks.length ? config.checks : [{ name: 'lint', argv: ['npm', 'run', 'lint'] }, { name: 'tests', argv: ['npm', 'test'] }];
 const directory = await mkdtemp(join(tmpdir(), 'lua-engineer-graph-'));
 function command(binary, argv, cwd = directory) {
   const result = spawnSync(binary, argv, { cwd, encoding: 'utf8', timeout: 60000,
@@ -27,9 +26,20 @@ function git(...args) {
 }
 try {
   git('init', '-b', 'lua/wf-smoke');
-  const pkg = { name: 'lua-engineer-smoke', version: '1.0.0', scripts: {
-    lint: 'node --check index.cjs', test: 'node --test index.test.cjs',
-  } };
+  // Generate package.json scripts that match the configured check commands.
+  // We only need the scripts referenced in checks; installCommands are run directly.
+  const scripts = {};
+  for (const check of checkCommands) {
+    const argv = check.argv;
+    if (argv[0] === 'npm' && argv[1] === 'run') {
+      scripts[argv[2]] = argv.slice(3).join(' ');
+    } else if (argv[0] === 'npm' && argv[1] === 'test') {
+      scripts.test = argv.slice(2).join(' ') || 'node --test index.test.cjs';
+    }
+  }
+  if (!scripts.lint) scripts.lint = 'node --check index.cjs';
+  if (!scripts.test) scripts.test = 'node --test index.test.cjs';
+  const pkg = { name: 'lua-engineer-smoke', version: '1.0.0', scripts };
   await writeFile(join(directory, 'package.json'), JSON.stringify(pkg));
   await writeFile(join(directory, 'package-lock.json'), JSON.stringify({ name: pkg.name, version: pkg.version,
     lockfileVersion: 3, requires: true, packages: { '': { name: pkg.name, version: pkg.version } } }));
@@ -40,7 +50,7 @@ try {
   const issue = { repo: config.repository, issueNumber: 7, title: 'Fix addition', specification: 'Return a + b.', baseBranch: config.baseBranch };
   async function runGraph(expectSuccess) {
     const sha = git('rev-parse', 'HEAD');
-    const change = { branch: 'lua/wf-smoke', headSha: sha, changedFiles: ['index.cjs'], checks: config.checks.map(check => check.name) };
+    const change = { branch: 'lua/wf-smoke', headSha: sha, changedFiles: ['index.cjs'], checks: checkCommands.map(check => check.name) };
     const supplied = {
       getIssue: issue, checkout: { baseSha, branch: change.branch },
       implement: { summary: 'Fixed addition.', changedFiles: change.changedFiles },

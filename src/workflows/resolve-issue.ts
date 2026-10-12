@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { createStep, createWorkflow, template } from 'lua-cli';
+import { createStep, createWorkflow, template, step } from 'lua-cli';
 import { engineerConfig } from '../config.ts';
 import { githubCall } from '../github.ts';
 import { loadIssue, type LoadedIssue } from '../issue.ts';
@@ -9,7 +9,15 @@ import { FABLE_MODEL } from '../model.ts';
 
 export const IssueInput = z.object({ repo: z.string(), issueNumber: z.number().int().positive() });
 const IssueDetails = IssueInput.extend({ title: z.string(), specification: z.string(), baseBranch: z.string() });
+const CheckoutResult = z.object({ baseSha: z.string(), branch: z.string() });
 const Change = z.object({ branch: z.string(), headSha: z.string(), changedFiles: z.array(z.string()), checks: z.array(z.string()) });
+const ImplementResult = z.object({ summary: z.string(), changedFiles: z.array(z.string()) });
+const PublishResult = z.object({ prNumber: z.number(), url: z.string(), headSha: z.string(), status: z.string() });
+
+type ImplementResultType = z.infer<typeof ImplementResult>;
+
+// verify step accepts implement output (for schema validation) but uses getStepResult('checkout') for actual data
+const VerifyInput = ImplementResult.extend({}).passthrough();
 
 const getIssue = createStep({
   id: 'getIssue', inputSchema: IssueInput, outputSchema: IssueDetails, requiredConnections: ['github'],
@@ -18,7 +26,7 @@ const getIssue = createStep({
 
 const checkout = createStep({
   id: 'checkout', inputSchema: IssueDetails,
-  outputSchema: z.object({ baseSha: z.string(), branch: z.string() }),
+  outputSchema: CheckoutResult,
   tier: 'job', workspace: { mount: 'rw' }, timeoutSeconds: 120,
   async execute({ exec, workspace }) {
     if (!exec || !workspace) throw new Error('This step requires a Lua git workspace.');
@@ -31,7 +39,7 @@ const checkout = createStep({
 });
 
 const verify = createStep({
-  id: 'verify', inputSchema: z.any(), outputSchema: Change,
+  id: 'verify', inputSchema: VerifyInput, outputSchema: Change,
   tier: 'job', workspace: { mount: 'rw' }, timeoutSeconds: 3600, jobResources: 'medium',
   async execute({ exec, getStepResult }) {
     if (!exec) throw new Error('Verification requires a Lua git workspace.');
@@ -43,6 +51,7 @@ const push = createStep({
   id: 'pushVerified', inputSchema: Change, outputSchema: Change,
   tier: 'job', workspace: { mount: 'rw' }, timeoutSeconds: 120,
   sideEffects: 'external', onError: 'park',
+  retry: { maxAttempts: 3, backoffSeconds: 10, backoff: 'exponential', maxBackoffSeconds: 60 },
   async execute({ inputData, exec, once }) {
     if (!exec) throw new Error('Publishing requires a Lua git workspace.');
     const run: RunCommand = argv => exec(argv as Parameters<typeof exec>[0]);
@@ -60,18 +69,20 @@ const push = createStep({
 
 const publish = createStep({
   id: 'publishPr', inputSchema: Change,
-  outputSchema: z.object({ prNumber: z.number(), url: z.string(), headSha: z.string(), status: z.string() }),
+  outputSchema: PublishResult,
   requiredConnections: ['github'], sideEffects: 'external', onError: 'park',
+  retry: { maxAttempts: 3, backoffSeconds: 10, backoff: 'exponential', maxBackoffSeconds: 60 },
   async execute({ inputData, getStepResult, once }) {
     const issue = getStepResult<LoadedIssue>('getIssue');
-    const implementation = getStepResult<{ summary: string }>('implement');
-    return once('create-pr', () => publishPullRequest(engineerConfig, issue, inputData as VerifiedChange, implementation.summary, githubCall));
+    const implementation = getStepResult<ImplementResultType>('implement');
+    return once('create-pr', () => publishPullRequest(engineerConfig, issue, inputData, implementation.summary, githubCall));
   },
 });
 
 export const resolveIssue = createWorkflow({
   name: 'resolve-issue', description: 'Implement a labelled issue, verify the code, and publish a PR for human review.',
   inputSchema: IssueInput,
+  outputSchema: PublishResult,
   connections: [{ key: 'github', integrationType: 'github', required: true }],
   // Fixed repository and base ref prevent caller input from selecting another checkout.
   workspace: { kind: 'git', repo: engineerConfig.repository, ref: engineerConfig.baseBranch, credentialsRef: 'github', sizeGb: 10, ttlHours: 72 },
@@ -95,7 +106,7 @@ export const resolveIssue = createWorkflow({
       'If the issue cannot be resolved within scope, report the blocker rather than inventing a completed fix. ' +
       'Reply with a concise summary and changed file paths. The next step independently verifies the checkout.'
     ),
-    outputSchema: z.object({ summary: z.string(), changedFiles: z.array(z.string()) }),
+    outputSchema: ImplementResult,
   })
   .then(verify)
   .then(push)

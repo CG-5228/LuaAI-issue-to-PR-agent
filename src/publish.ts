@@ -3,6 +3,19 @@ import type { GithubCall, PullRequest } from './github.ts';
 import type { LoadedIssue } from './issue.ts';
 import type { VerifiedChange } from './verification.ts';
 
+/**
+ * Publish or reuse a pull request for the verified change.
+ * Validates that the remote branch matches the verified commit, then creates a new PR
+ * or reuses an existing matching PR.
+ *
+ * @param config Engineer configuration.
+ * @param issue Loaded issue metadata.
+ * @param change Verified change with branch, head SHA, changed files, and checks.
+ * @param summary Implementation summary from the agent.
+ * @param api GitHub API call function.
+ * @returns PR metadata including number, URL, head SHA, and status.
+ * @throws If the remote branch differs, multiple PRs exist, or PR doesn't match.
+ */
 export async function publishPullRequest(config: EngineerConfig, issue: LoadedIssue, change: VerifiedChange,
   summary: string, api: GithubCall): Promise<{ prNumber: number; url: string; headSha: string; status: string }> {
   if (issue.repo !== config.repository || issue.baseBranch !== config.baseBranch ||

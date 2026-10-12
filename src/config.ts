@@ -5,6 +5,13 @@ import { FABLE_MODEL } from './model.ts';
 export const engineerConfig = raw;
 export type EngineerConfig = typeof engineerConfig;
 
+/**
+ * Validate the engineer configuration.
+ * Throws if the configuration is invalid or uses placeholder values.
+ *
+ * @param config The engineer configuration to validate.
+ * @throws If any configuration value is invalid.
+ */
 export function assertConfigured(config: EngineerConfig): void {
   if (config.codingModel !== FABLE_MODEL) throw new Error('This coworker must use Fable 5.1.');
   if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(config.repository) ||
@@ -24,5 +31,11 @@ export function assertConfigured(config: EngineerConfig): void {
       throw new Error('Commands must use a Lua Job-tier executable and an explicit argument array.');
     }
     if (command.some(arg => /\0|\n|\r/.test(arg))) throw new Error('Invalid command argument.');
+  }
+  if (config.verificationIgnorePaths) {
+    for (const pattern of config.verificationIgnorePaths) {
+      if (!pattern || typeof pattern !== 'string') throw new Error('verificationIgnorePaths must be non-empty strings.');
+      if (pattern.includes('..') || pattern.startsWith('/')) throw new Error('Invalid verificationIgnorePaths pattern.');
+    }
   }
 }
