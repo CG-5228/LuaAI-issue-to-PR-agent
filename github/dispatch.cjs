@@ -4,7 +4,7 @@ async function run({ github, context, core, config, env, fetch }) {
   if (!env.LUA_API_KEY || !env.LUA_AGENT_ID) throw new Error('Configure LUA_API_KEY and LUA_AGENT_ID.');
   if (!/^agent_[A-Za-z0-9_-]+$/.test(env.LUA_AGENT_ID) && !/^baseAgent_[A-Za-z0-9_-]+$/.test(env.LUA_AGENT_ID)) throw new Error('Invalid Lua agent ID.');
   const actor = await github.rest.repos.getCollaboratorPermissionLevel({ owner, repo, username: context.actor });
-  if (!['triage', 'write', 'maintain', 'admin'].includes(actor.data.permission)) throw new Error('Only repository maintainers may assign agent work.');
+  if (!['write', 'maintain', 'admin'].includes(actor.data.permission)) throw new Error('Only repository maintainers may assign agent work.');
   if (context.eventName === 'issues' && context.payload.label?.name !== config.issueLabel) return;
   const issueNumber = Number(context.payload.issue?.number ?? context.payload.inputs?.issue_number);
   const attempt = Number(context.payload.inputs?.attempt ?? 1);

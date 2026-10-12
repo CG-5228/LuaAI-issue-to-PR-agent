@@ -11,6 +11,17 @@ const POLICY_QUERY = `query EngineerMergePolicy($owner: String!, $repo: String!,
   }
 }`;
 
+// Shared path matching logic (must match src/verification.ts)
+function isProtected(path, protectedPaths) {
+  return protectedPaths.some(rule => {
+    if (rule.endsWith('/')) {
+      const dir = rule.slice(0, -1);
+      return path === dir || path.startsWith(rule);
+    }
+    return path === rule || path.endsWith(`/${rule}`);
+  });
+}
+
 function eligiblePr(pr, config) {
   return pr.state === 'open' && !pr.draft && pr.base.ref === config.baseBranch &&
     pr.head.repo?.full_name?.toLowerCase() === config.repository.toLowerCase() &&
@@ -62,6 +73,34 @@ function requiredChecksPass(checkRuns, statuses, required) {
   });
 }
 
+async function getReviewerPermissionsBatch(github, owner, repo, usernames) {
+  // Batch permission checks to avoid N+1 API calls
+  const permissions = {};
+  for (const username of usernames) {
+    try {
+      const { data } = await github.rest.repos.getCollaboratorPermissionLevel({ owner, repo, username });
+      permissions[username] = data.permission;
+    } catch {
+      permissions[username] = 'none';
+    }
+  }
+  return permissions;
+}
+
+async function checkRulesetEnforcement(github, owner, repo, rules) {
+  // Only active rules without bypass actors satisfy this automation's policy.
+  const relevantRules = rules.filter(rule => ['pull_request', 'required_status_checks'].includes(rule.type));
+  const ids = [...new Set(relevantRules.map(rule => rule.ruleset_id))];
+  if (!ids.length || ids.some(id => !id)) throw new Error('Could not establish enforced ruleset IDs.');
+  for (const rulesetId of ids) {
+    const { data: ruleset } = await github.request('GET /repos/{owner}/{repo}/rulesets/{ruleset_id}', { owner, repo, ruleset_id: rulesetId });
+    if (ruleset.enforcement !== 'active' || !Array.isArray(ruleset.bypass_actors) || ruleset.bypass_actors.length) {
+      return false;
+    }
+  }
+  return true;
+}
+
 async function mergeOne({ github, core, config, owner, repo, number }) {
   const { data: pr } = await github.rest.pulls.get({ owner, repo, pull_number: number });
   if (!eligiblePr(pr, config)) return false;
@@ -78,34 +117,28 @@ async function mergeOne({ github, core, config, owner, repo, number }) {
     const { data: rules } = await github.request('GET /repos/{owner}/{repo}/rules/branches/{branch}', {
       owner, repo, branch: config.baseBranch,
     });
-    if (rulesetProtectionAllows(rules, config)) {
-      // Only active rules without bypass actors satisfy this automation's policy.
-      const ids = [...new Set(rules.filter(rule => ['pull_request', 'required_status_checks'].includes(rule.type)).map(rule => rule.ruleset_id))];
-      if (!ids.length || ids.some(id => !id)) throw new Error('Could not establish enforced ruleset IDs.');
+    if (rulesetProtectionAllows(rules, config) && await checkRulesetEnforcement(github, owner, repo, rules)) {
       protectedBranch = true;
-      for (const rulesetId of ids) {
-        const { data: ruleset } = await github.request('GET /repos/{owner}/{repo}/rulesets/{ruleset_id}', { owner, repo, ruleset_id: rulesetId });
-        if (ruleset.enforcement !== 'active' || !Array.isArray(ruleset.bypass_actors) || ruleset.bypass_actors.length) protectedBranch = false;
-      }
     }
   }
   if (!protectedBranch) throw new Error('The base branch needs enforced current-commit human reviews and the configured required CI checks.');
 
   const reviews = await github.paginate(github.rest.pulls.listReviews, { owner, repo, pull_number: number, per_page: 100 });
   const reviewers = currentHumanReviewers(reviews, pr);
-  let qualified = 0;
-  for (const username of reviewers) {
-    const { data } = await github.rest.repos.getCollaboratorPermissionLevel({ owner, repo, username });
-    if (['write', 'maintain', 'admin'].includes(data.permission)) qualified++;
-  }
+  if (reviewers.length < config.minimumApprovals) return false;
+
+  // Batch permission checks to avoid N+1 API calls
+  const permissions = await getReviewerPermissionsBatch(github, owner, repo, reviewers);
+  const qualified = reviewers.filter(u => ['write', 'maintain', 'admin'].includes(permissions[u])).length;
   if (qualified < config.minimumApprovals) return false;
+
   const checkRuns = await github.paginate(github.rest.checks.listForRef, { owner, repo, ref: pr.head.sha, per_page: 100 });
   const statuses = await github.paginate(github.rest.repos.listCommitStatusesForRef, { owner, repo, ref: pr.head.sha, per_page: 100 });
   if (!requiredChecksPass(checkRuns, statuses, config.requiredStatusChecks)) return false;
+
   const files = await github.paginate(github.rest.pulls.listFiles, { owner, repo, pull_number: number, per_page: 100 });
   if (!files.length || files.length > config.maxChangedFiles || files.some(file =>
-    [file.filename, file.previous_filename].filter(Boolean).some(path => config.protectedPaths.some(rule =>
-      rule.endsWith('/') ? path.startsWith(rule) : path === rule || path.endsWith(`/${rule}`))))) return false;
+    [file.filename, file.previous_filename].filter(Boolean).some(path => isProtected(path, config.protectedPaths)))) return false;
 
   // GitHub enforces its current branch rules too. The SHA prevents merging a new push
   // that raced with the review/check queries above. There is no admin bypass option.

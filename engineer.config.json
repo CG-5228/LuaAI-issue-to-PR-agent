@@ -13,6 +13,7 @@
   "minimumApprovals": 1,
   "maxChangedFiles": 30,
   "protectedPaths": [".github/", ".lua/", ".agents/", ".codex/", "AGENTS.md"],
+  "verificationIgnorePaths": ["coverage/", ".nyc_output/", "*.log", ".snapshot/", "__snapshots__/"],
   "budget": { "maxCredits": 100, "maxSteps": 12, "maxDurationSeconds": 10800 },
   "codingTimeoutSeconds": 3600
 }
